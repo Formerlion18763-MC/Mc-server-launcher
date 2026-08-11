@@ -1,0 +1,70 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch: # manual trigger from the Actions tab — Android builds
+                      # are slower/more experimental than desktop, so this
+                      # doesn't run automatically on every push like the
+                      # desktop workflow does.
+
+jobs:
+  build-android:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK
+        run: sdkmanager --install "ndk;27.0.12077973"
+
+      - name: Install frontend dependencies
+        run: npm install
+
+      - name: Init Android project
+        run: npx tauri android init
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+
+      - name: Generate icons (including real Android adaptive icon assets)
+        run: npx tauri icon src-tauri/icons/icon.png
+
+      - name: Apply Termux integration
+        run: python3 android-integration/apply-integration.py
+
+      - name: Build debug APK
+        run: npx tauri android build --debug --apk --target aarch64
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+          # Rust needs to be told exactly which NDK compiler to use as the
+          # linker — without this, `cargo build` fails with exit code 101
+          # while cross-compiling, which is what happened in an earlier run.
+          CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
+
+      - name: Find and upload APK
+        run: |
+          APK_PATH=$(find src-tauri/gen/android -name "*.apk" | head -n 1)
+          echo "Found: $APK_PATH"
+          mkdir -p out
+          cp "$APK_PATH" out/mc-launcher-debug.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mc-launcher-android-apk
+          path: out/mc-launcher-debug.apk
